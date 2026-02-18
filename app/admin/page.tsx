@@ -70,12 +70,13 @@ export default function AdminPage() {
     setSendingLink(true);
     setErrorMsg('');
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: 'http://localhost:3000/admin',
-      },
-    });
+const { error } = await supabase.auth.signInWithOtp({
+  email,
+  options: {
+    emailRedirectTo: `${window.location.origin}/admin`,
+  },
+ });
+
 
     if (error) setErrorMsg(error.message);
 
