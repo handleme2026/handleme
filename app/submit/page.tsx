@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabaseClient';
 
 export default function SubmitPage() {
   const [title, setTitle] = useState('');
+  const [location, setLocation] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [agree, setAgree] = useState(false);
 
@@ -18,14 +19,42 @@ export default function SubmitPage() {
 
   function resetForm() {
     setTitle('');
+    setLocation('');
     setFile(null);
     setAgree(false);
     setStatus('idle');
     setErrorMsg('');
   }
 
+  function isCityState(s: string) {
+    // Simple MVP rule: must contain a comma and 2+ letters after it (e.g., "Austin, TX")
+    const trimmed = s.trim();
+    return /^[^,]+,\s*[A-Za-z]{2,}$/.test(trimmed);
+  }
+
   async function handleSubmit() {
     setErrorMsg('');
+
+    const cleanTitle = title.trim();
+    const cleanLocation = location.trim();
+
+    if (!cleanTitle) {
+      setStatus('error');
+      setErrorMsg('Photo name is required.');
+      return;
+    }
+
+    if (!cleanLocation) {
+      setStatus('error');
+      setErrorMsg('Location is required (City, State).');
+      return;
+    }
+
+    if (!isCityState(cleanLocation)) {
+      setStatus('error');
+      setErrorMsg('Please use the format: City, ST (example: Austin, TX).');
+      return;
+    }
 
     if (!file) {
       setStatus('error');
@@ -77,7 +106,8 @@ export default function SubmitPage() {
 
       // 2) Insert DB row as pending
       const { error: insertErr } = await supabase.from('photos').insert({
-        title: title.trim() || null,
+        title: cleanTitle,
+        location: cleanLocation,
         image_path: path,
         status: 'pending',
         like_count: 0,
@@ -108,11 +138,30 @@ export default function SubmitPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16, maxWidth: 720 }}>
         <label style={{ display: 'grid', gap: 8 }}>
-          <span style={{ opacity: 0.85 }}>Title (optional)</span>
+          <span style={{ opacity: 0.85 }}>Photo name (required)</span>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g., Rings & Light"
+            required
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              border: '1px solid rgba(255,255,255,0.15)',
+              background: '#0f0f0f',
+              color: 'white',
+              outline: 'none',
+            }}
+          />
+        </label>
+
+        <label style={{ display: 'grid', gap: 8 }}>
+          <span style={{ opacity: 0.85 }}>Location (City, State)</span>
+          <input
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="e.g., Austin, TX"
+            required
             style={{
               padding: 10,
               borderRadius: 10,
@@ -204,7 +253,7 @@ export default function SubmitPage() {
         )}
 
         <div style={{ fontSize: 12, color: '#7f7f7f' }}>
-          Tip: You can later require accounts to submit, add automatic tagging, and add a “Report” button in the gallery.
+          Tip: Keep location simple for now. We can add a dropdown of states later, or auto-format it for you.
         </div>
       </div>
     </main>
