@@ -1,13 +1,20 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+
+type TagRow = { id: string; name: string };
+
+const DEFAULT_TAGS = ['working', 'rings', 'veiny', 'manicured', 'minimal', 'tattooed'];
 
 export default function SubmitPage() {
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [agree, setAgree] = useState(false);
+
+  const [tags, setTags] = useState<TagRow[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   const [status, setStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState<string>('');
@@ -17,19 +24,38 @@ export default function SubmitPage() {
     return URL.createObjectURL(file);
   }, [file]);
 
+  useEffect(() => {
+    // Pull tags from DB; fallback to defaults if table is empty
+    (async () => {
+      const { data, error } = await supabase.from('tags').select('id,name').order('name');
+      if (error) {
+        // silent fallback
+        setTags(DEFAULT_TAGS.map((name, i) => ({ id: `local_${i}`, name })));
+        return;
+      }
+      const list = (data ?? []).length
+        ? (data ?? [])
+        : DEFAULT_TAGS.map((name, i) => ({ id: `local_${i}`, name }));
+      setTags(list);
+    })();
+  }, []);
+
   function resetForm() {
     setTitle('');
     setLocation('');
     setFile(null);
     setAgree(false);
+    setSelectedTags([]);
     setStatus('idle');
     setErrorMsg('');
   }
 
   function isCityState(s: string) {
-    // Simple MVP rule: must contain a comma and 2+ letters after it (e.g., "Austin, TX")
-    const trimmed = s.trim();
-    return /^[^,]+,\s*[A-Za-z]{2,}$/.test(trimmed);
+    return /^[^,]+,\s*[A-Za-z]{2,}$/.test(s.trim());
+  }
+
+  function toggleTag(name: string) {
+    setSelectedTags((prev) => (prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name]));
   }
 
   async function handleSubmit() {
@@ -68,7 +94,6 @@ export default function SubmitPage() {
       return;
     }
 
-    // Basic guardrails (MVP)
     const maxMB = 8;
     if (file.size > maxMB * 1024 * 1024) {
       setStatus('error');
@@ -85,37 +110,28 @@ export default function SubmitPage() {
     setStatus('uploading');
 
     try {
-      // 1) Upload to Storage
       const ext = file.name.split('.').pop() || 'jpg';
       const safeExt = ext.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-
-      // Put uploads under submissions/ so our Storage policy is simple.
       const path = `submissions/${crypto.randomUUID()}.${safeExt}`;
 
-      const { error: uploadErr } = await supabase.storage
-        .from('photos')
-        .upload(path, file, {
-          cacheControl: '3600',
-          upsert: false,
-          contentType: file.type,
-        });
+      const { error: uploadErr } = await supabase.storage.from('photos').upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type,
+      });
 
-      if (uploadErr) {
-        throw new Error(`Upload failed: ${uploadErr.message}`);
-      }
+      if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
 
-      // 2) Insert DB row as pending
       const { error: insertErr } = await supabase.from('photos').insert({
         title: cleanTitle,
         location: cleanLocation,
         image_path: path,
         status: 'pending',
         like_count: 0,
+        suggested_tags: selectedTags, // 👈 new
       });
 
-      if (insertErr) {
-        throw new Error(`Database insert failed: ${insertErr.message}`);
-      }
+      if (insertErr) throw new Error(`Database insert failed: ${insertErr.message}`);
 
       setStatus('success');
     } catch (e: any) {
@@ -133,10 +149,9 @@ export default function SubmitPage() {
 
       <p style={{ color: '#bdbdbd', maxWidth: 720, lineHeight: 1.5 }}>
         Submit a hand photo for review. Keep it classy, consensual, and true to the vibe.
-        Once approved, it’ll appear in the gallery. ✋
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16, maxWidth: 720 }}>
+      <div style={{ display: 'grid', gap: 16, maxWidth: 720 }}>
         <label style={{ display: 'grid', gap: 8 }}>
           <span style={{ opacity: 0.85 }}>Photo name (required)</span>
           <input
@@ -144,14 +159,7 @@ export default function SubmitPage() {
             onChange={(e) => setTitle(e.target.value)}
             placeholder="e.g., Rings & Light"
             required
-            style={{
-              padding: 10,
-              borderRadius: 10,
-              border: '1px solid rgba(255,255,255,0.15)',
-              background: '#0f0f0f',
-              color: 'white',
-              outline: 'none',
-            }}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: '#0f0f0f', color: 'white', outline: 'none' }}
           />
         </label>
 
@@ -162,74 +170,69 @@ export default function SubmitPage() {
             onChange={(e) => setLocation(e.target.value)}
             placeholder="e.g., Austin, TX"
             required
-            style={{
-              padding: 10,
-              borderRadius: 10,
-              border: '1px solid rgba(255,255,255,0.15)',
-              background: '#0f0f0f',
-              color: 'white',
-              outline: 'none',
-            }}
+            style={{ padding: 10, borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: '#0f0f0f', color: 'white', outline: 'none' }}
           />
         </label>
 
+        <div style={{ display: 'grid', gap: 8 }}>
+          <span style={{ opacity: 0.85 }}>Tags (optional)</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {tags.map((t) => {
+              const active = selectedTags.includes(t.name);
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => toggleTag(t.name)}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 999,
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    background: active ? 'rgba(255,77,109,0.25)' : '#0f0f0f',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: 13,
+                  }}
+                >
+                  #{t.name}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 12, color: '#7f7f7f' }}>
+            Tags are suggestions. Admin may adjust before approval.
+          </div>
+        </div>
+
         <label style={{ display: 'grid', gap: 8 }}>
           <span style={{ opacity: 0.85 }}>Photo</span>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            style={{ color: '#bdbdbd' }}
-          />
+          <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} style={{ color: '#bdbdbd' }} />
         </label>
 
         {file ? (
           <div style={{ background: '#0f0f0f', borderRadius: 12, padding: 12, border: '1px solid rgba(255,255,255,0.10)' }}>
-            <div style={{ fontSize: 13, color: '#bdbdbd', marginBottom: 10 }}>
-              Preview (not public until approved)
-            </div>
-            <img
-              src={previewUrl}
-              alt="preview"
-              style={{ width: '100%', maxHeight: 420, objectFit: 'cover', borderRadius: 10, display: 'block' }}
-            />
+            <div style={{ fontSize: 13, color: '#bdbdbd', marginBottom: 10 }}>Preview (not public until approved)</div>
+            <img src={previewUrl} alt="preview" style={{ width: '100%', maxHeight: 420, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
           </div>
         ) : null}
 
         <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', color: '#bdbdbd' }}>
-          <input
-            type="checkbox"
-            checked={agree}
-            onChange={(e) => setAgree(e.target.checked)}
-            style={{ marginTop: 3 }}
-          />
+          <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} style={{ marginTop: 3 }} />
           <span style={{ lineHeight: 1.4 }}>
             I confirm I own this photo or have permission to share it, it depicts consenting adults only,
             and it follows HandleMe’s submission terms (no nudity, no explicit acts, no minors, no harassment).
           </span>
         </label>
 
-        {status === 'error' ? (
-          <div style={{ color: '#ff6b6b' }}>{errorMsg}</div>
-        ) : null}
+        {status === 'error' ? <div style={{ color: '#ff6b6b' }}>{errorMsg}</div> : null}
 
         {status === 'success' ? (
           <div style={{ background: 'rgba(255,77,109,0.08)', border: '1px solid rgba(255,77,109,0.25)', padding: 12, borderRadius: 12 }}>
             <div style={{ fontWeight: 700, color: '#ff4d6d' }}>Submitted ✨</div>
-            <div style={{ color: '#bdbdbd', marginTop: 6 }}>
-              Your photo is in the review queue. Once approved, it will appear in the gallery.
-            </div>
+            <div style={{ color: '#bdbdbd', marginTop: 6 }}>Your photo is in the review queue.</div>
             <button
               onClick={resetForm}
-              style={{
-                marginTop: 12,
-                padding: '10px 12px',
-                borderRadius: 10,
-                border: '1px solid rgba(255,255,255,0.15)',
-                background: '#0f0f0f',
-                color: 'white',
-                cursor: 'pointer',
-              }}
+              style={{ marginTop: 12, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: '#0f0f0f', color: 'white', cursor: 'pointer' }}
             >
               Submit another
             </button>
@@ -251,10 +254,6 @@ export default function SubmitPage() {
             {status === 'uploading' ? 'Submitting…' : 'Submit for review'}
           </button>
         )}
-
-        <div style={{ fontSize: 12, color: '#7f7f7f' }}>
-          Tip: Keep location simple for now. We can add a dropdown of states later, or auto-format it for you.
-        </div>
       </div>
     </main>
   );
