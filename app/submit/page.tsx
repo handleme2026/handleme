@@ -25,18 +25,13 @@ export default function SubmitPage() {
   }, [file]);
 
   useEffect(() => {
-    // Pull tags from DB; fallback to defaults if table is empty
     (async () => {
       const { data, error } = await supabase.from('tags').select('id,name').order('name');
-      if (error) {
-        // silent fallback
+      if (error || !data || data.length === 0) {
         setTags(DEFAULT_TAGS.map((name, i) => ({ id: `local_${i}`, name })));
         return;
       }
-      const list = (data ?? []).length
-        ? (data ?? [])
-        : DEFAULT_TAGS.map((name, i) => ({ id: `local_${i}`, name }));
-      setTags(list);
+      setTags(data as TagRow[]);
     })();
   }, []);
 
@@ -58,54 +53,26 @@ export default function SubmitPage() {
     setSelectedTags((prev) => (prev.includes(name) ? prev.filter((t) => t !== name) : [...prev, name]));
   }
 
+  function fail(msg: string) {
+    setStatus('error');
+    setErrorMsg(msg);
+  }
+
   async function handleSubmit() {
     setErrorMsg('');
 
     const cleanTitle = title.trim();
     const cleanLocation = location.trim();
 
-    if (!cleanTitle) {
-      setStatus('error');
-      setErrorMsg('Photo name is required.');
-      return;
-    }
-
-    if (!cleanLocation) {
-      setStatus('error');
-      setErrorMsg('Location is required (City, State).');
-      return;
-    }
-
-    if (!isCityState(cleanLocation)) {
-      setStatus('error');
-      setErrorMsg('Please use the format: City, ST (example: Austin, TX).');
-      return;
-    }
-
-    if (!file) {
-      setStatus('error');
-      setErrorMsg('Pick a photo first.');
-      return;
-    }
-
-    if (!agree) {
-      setStatus('error');
-      setErrorMsg('Please agree to the submission terms.');
-      return;
-    }
+    if (!cleanTitle) return fail('Photo name is required.');
+    if (!cleanLocation) return fail('Location is required (City, State).');
+    if (!isCityState(cleanLocation)) return fail('Please use the format: City, ST (example: Austin, TX).');
+    if (!file) return fail('Pick a photo first.');
+    if (!agree) return fail('Please agree to the submission terms.');
 
     const maxMB = 8;
-    if (file.size > maxMB * 1024 * 1024) {
-      setStatus('error');
-      setErrorMsg(`Please upload an image under ${maxMB}MB.`);
-      return;
-    }
-
-    if (!file.type.startsWith('image/')) {
-      setStatus('error');
-      setErrorMsg('That file doesn’t look like an image.');
-      return;
-    }
+    if (file.size > maxMB * 1024 * 1024) return fail(`Please upload an image under ${maxMB}MB.`);
+    if (!file.type.startsWith('image/')) return fail('That file doesn’t look like an image.');
 
     setStatus('uploading');
 
@@ -119,24 +86,22 @@ export default function SubmitPage() {
         upsert: false,
         contentType: file.type,
       });
-
       if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
 
       const { error: insertErr } = await supabase.from('photos').insert({
         title: cleanTitle,
         location: cleanLocation,
         image_path: path,
-        status: 'pending',
+        status: 'pending',     // ✅ still reviewed
         like_count: 0,
-        suggested_tags: selectedTags, // 👈 new
+        tags: selectedTags,    // ✅ tags are FINAL
       });
 
       if (insertErr) throw new Error(`Database insert failed: ${insertErr.message}`);
 
       setStatus('success');
     } catch (e: any) {
-      setStatus('error');
-      setErrorMsg(e?.message ?? 'Something went wrong.');
+      fail(e?.message ?? 'Something went wrong.');
     }
   }
 
@@ -199,9 +164,6 @@ export default function SubmitPage() {
               );
             })}
           </div>
-          <div style={{ fontSize: 12, color: '#7f7f7f' }}>
-            Tags are suggestions. Admin may adjust before approval.
-          </div>
         </div>
 
         <label style={{ display: 'grid', gap: 8 }}>
@@ -251,7 +213,7 @@ export default function SubmitPage() {
               fontWeight: 800,
             }}
           >
-            {status === 'uploading' ? 'Submitting…' : 'Submit for review'}
+            {status === 'uploading' ? 'Submitting…' : 'Submit'}
           </button>
         )}
       </div>
